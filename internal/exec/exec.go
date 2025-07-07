@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 )
 
 type Executor struct{}
@@ -77,7 +76,7 @@ func (e *Executor) setupMountNamespace(mountPoint string) error {
 			cmd = exec.Command("mount", "-t", m.fstype, m.source, target)
 		}
 
-		fmt.Println(strings.Join(cmd.Args, " "))
+		// fmt.Println(strings.Join(cmd.Args, " "))
 		cmd.Run()
 	}
 

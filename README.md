@@ -23,6 +23,7 @@ sudo mv qimi /usr/local/bin/
 sudo qimi mount ./image.qcow2 myimage
 sudo qimi mount --read-only ./image.qcow2 myimage
 ```
+.
 
 ### List mounted images
 
