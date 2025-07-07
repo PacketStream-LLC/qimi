@@ -1,4 +1,4 @@
-# Qimi - Qemu Image Modifier - Interactive
+# Qimi - Qemu Image Manipulator - Interactive
 
 Qimi is a command-line tool that allows you to mount QEMU images (.qcow2, .qcow2c, .raw) and execute commands inside them using chroot.
 

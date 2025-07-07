@@ -33,7 +33,7 @@ dist/
 Thumbs.db
 
 # Qimi builds
-qimi
+/qimi
 
 # local test images
 *.img
