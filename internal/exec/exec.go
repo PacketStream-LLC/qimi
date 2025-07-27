@@ -218,8 +218,13 @@ func (e *Executor) restoreResolvConf(mountPoint string) error {
 
 func (e *Executor) CleanupMountNamespace(mountPoint string) error {
 	// Validate mountPoint to prevent accidentally unmounting host directories
-	if mountPoint == "" || mountPoint == "/" {
+	if mountPoint == "" || mountPoint == "/" || mountPoint == "/dev" || mountPoint == "/proc" || mountPoint == "/sys" {
 		return fmt.Errorf("invalid mount point for cleanup: %s. THIS PROBABLY IS A BUG!!", mountPoint)
+	}
+	
+	// Additional safety check - mount point should be an absolute path under /tmp or similar
+	if !strings.HasPrefix(mountPoint, "/tmp/") && !strings.HasPrefix(mountPoint, "/mnt/") {
+		return fmt.Errorf("unsafe mount point for cleanup: %s. THIS PROBABLY IS A BUG!!", mountPoint)
 	}
 	
 	// Ensure mountPoint ends with proper path separator for safe concatenation
