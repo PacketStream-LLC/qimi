@@ -56,10 +56,8 @@ func (e *Executor) Execute(mountPoint string, command string, args []string, int
 		chrootCmd.Stdin = os.Stdin
 	}
 
-	if tty {
-		chrootCmd.Stdout = os.Stdout
-		chrootCmd.Stderr = os.Stderr
-	}
+	chrootCmd.Stdout = os.Stdout
+	chrootCmd.Stderr = os.Stderr
 
 	return chrootCmd.Run()
 }
@@ -92,10 +90,18 @@ func (e *Executor) getBackupPath(mountPoint string) string {
 	return filepath.Join("/tmp/qimi/files", backupName)
 }
 
+func (e *Executor) getBackupSymlinkPath(mountPoint string) string {
+	// Create a unique backup filename for symlink info
+	hash := md5.Sum([]byte(mountPoint))
+	backupName := fmt.Sprintf("resolv_conf_symlink_%x", hash[:8])
+	return filepath.Join("/tmp/qimi/files", backupName)
+}
+
 func (e *Executor) backupAndSetupResolvConf(mountPoint string, nameservers []string) error {
 	target := mountPoint + "/etc/resolv.conf"
 	etcDir := mountPoint + "/etc"
 	backupPath := e.getBackupPath(mountPoint)
+	symlinkBackupPath := e.getBackupSymlinkPath(mountPoint)
 
 	// Ensure backup directory exists
 	if err := os.MkdirAll("/tmp/qimi/files", 0755); err != nil {
@@ -104,18 +110,31 @@ func (e *Executor) backupAndSetupResolvConf(mountPoint string, nameservers []str
 
 	// Check if /etc directory exists
 	if _, err := os.Stat(etcDir); os.IsNotExist(err) {
-		// If /etc doesn't exist, we can't set up resolv.conf
-		return nil
+		// If /etc doesn't exist, create it
+		if err := os.MkdirAll(etcDir, 0755); err != nil {
+			return fmt.Errorf("failed to create /etc directory: %w", err)
+		}
 	}
 
 	// Only backup if we haven't already (first time for this mount point)
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 		// Check if target exists
-		if _, err := os.Stat(target); err == nil {
-			// Backup existing resolv.conf
-			if data, err := os.ReadFile(target); err == nil {
-				if err := os.WriteFile(backupPath, data, 0644); err != nil {
+		if info, err := os.Lstat(target); err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				// It's a symlink, backup where it was pointing
+				symlinkTarget, err := os.Readlink(target)
+				if err != nil {
 					return err
+				}
+				if err := os.WriteFile(symlinkBackupPath, []byte(symlinkTarget), 0644); err != nil {
+					return err
+				}
+			} else {
+				// Regular file, backup the contents
+				if data, err := os.ReadFile(target); err == nil {
+					if err := os.WriteFile(backupPath, data, 0644); err != nil {
+						return err
+					}
 				}
 			}
 		} else if os.IsNotExist(err) {
@@ -149,9 +168,15 @@ func (e *Executor) backupAndSetupResolvConf(mountPoint string, nameservers []str
 		}
 		resolvContent = []byte(strings.Join(resolvLines, "\n") + "\n")
 	} else {
-		// Read host resolv.conf
+		// Read host resolv.conf, following symlinks
 		var err error
-		resolvContent, err = os.ReadFile("/etc/resolv.conf")
+		realPath, err := filepath.EvalSymlinks("/etc/resolv.conf")
+		if err != nil {
+			// Fallback to direct read if symlink resolution fails
+			resolvContent, err = os.ReadFile("/etc/resolv.conf")
+		} else {
+			resolvContent, err = os.ReadFile(realPath)
+		}
 		if err != nil {
 			return err
 		}
@@ -164,8 +189,16 @@ func (e *Executor) backupAndSetupResolvConf(mountPoint string, nameservers []str
 func (e *Executor) restoreResolvConf(mountPoint string) error {
 	target := mountPoint + "/etc/resolv.conf"
 	backupPath := e.getBackupPath(mountPoint)
+	symlinkBackupPath := e.getBackupSymlinkPath(mountPoint)
 
-	// Read backup
+	// Check if there was a symlink backup
+	if symlinkTarget, err := os.ReadFile(symlinkBackupPath); err == nil && len(symlinkTarget) > 0 {
+		// Remove current file and recreate symlink
+		os.Remove(target)
+		return os.Symlink(string(symlinkTarget), target)
+	}
+
+	// Read regular backup
 	backup, err := os.ReadFile(backupPath)
 	if err != nil {
 		// If no backup exists, just remove the current file
@@ -242,5 +275,8 @@ func (e *Executor) isMounted(path string) bool {
 // CleanupBackupFiles removes backup files for a mount point
 func (e *Executor) CleanupBackupFiles(mountPoint string) error {
 	backupPath := e.getBackupPath(mountPoint)
-	return os.Remove(backupPath)
+	symlinkBackupPath := e.getBackupSymlinkPath(mountPoint)
+	os.Remove(backupPath)
+	os.Remove(symlinkBackupPath)
+	return nil
 }
