@@ -154,7 +154,7 @@ func (m *Mounter) disconnectNBD(mountPoint string) error {
 	if err != nil {
 		if os.IsNotExist(err) {
 			// The NBD doesn't exist. let's check lsblk.
-			logger.Warn("NBD metadata file not found, please run lsblk for NBD devices")
+			logger.Warn("NBD metadata file not found, please run lsblk for check which NBD device is used and unmount it via qemu-nbd --disconnect")
 			return errors.New("NBD metadata file mismatch")
 		}
 
