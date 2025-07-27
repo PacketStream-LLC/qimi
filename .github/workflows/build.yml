@@ -1,31 +1,109 @@
-name: Build
+name: Build qimi
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
     branches: [ main ]
+  release:
+    types: [ published ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+
     steps:
-    - uses: actions/checkout@v4
-    
+    - name: Checkout code
+      uses: actions/checkout@v4
+
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
         go-version: '1.24.4'
-    
-    - name: Build
-      run: go build -v -o qimi ./cmd/qimi
-    
-    - name: Test
-      run: go test -v ./...
-    
-    - name: Upload binary
-      uses: actions/upload-artifact@v4
+
+    - name: Cache Go modules
+      uses: actions/cache@v3
       with:
-        name: qimi-binary
-        path: qimi
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Run tests
+      run: go test -v ./...
+
+    - name: Set binary name
+      id: binary
+      run: |
+        BINARY_NAME="qimi-linux-${{ matrix.goarch }}"
+        echo "name=${BINARY_NAME}" >> $GITHUB_OUTPUT
+
+    - name: Build binary
+      env:
+        GOOS: linux
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 0
+      run: |
+        go build -ldflags="-s -w" -o ${{ steps.binary.outputs.name }} ./cmd/qimi
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: qimi-binaries
+        path: ${{ steps.binary.outputs.name }}
+        retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: qimi-binaries
+        path: ./binaries
+
+    - name: Create checksums
+      run: |
+        cd binaries
+        sha256sum * > checksums.txt
+
+    - name: Upload release assets
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          binaries/*
+        body: |
+          ## Downloads
+          
+          Download the appropriate binary for your Linux system:
+          
+          - **Linux AMD64**: `qimi-linux-amd64`
+          - **Linux ARM64**: `qimi-linux-arm64`
+          
+          ## Installation
+          
+          1. Download the binary for your architecture
+          2. Make it executable: `chmod +x qimi-linux-*`
+          3. Move to your PATH: `sudo mv qimi-linux-* /usr/local/bin/qimi`
+          
+          ## Prerequisites
+          
+          Ensure you have the required dependencies:
+          ```bash
+          sudo apt-get update
+          sudo apt-get install qemu-utils
+          ```
+          
+          ## Verification
+          
+          Verify the download with the provided checksums in `checksums.txt`.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
