@@ -184,18 +184,59 @@ func (e *Executor) restoreResolvConf(mountPoint string) error {
 }
 
 func (e *Executor) CleanupMountNamespace(mountPoint string) error {
+	// Validate mountPoint to prevent accidentally unmounting host directories
+	if mountPoint == "" || mountPoint == "/" {
+		return fmt.Errorf("invalid mount point for cleanup: %s. THIS PROBABLY IS A BUG!!", mountPoint)
+	}
+	
+	// Ensure mountPoint ends with proper path separator for safe concatenation
+	if !strings.HasSuffix(mountPoint, "/") {
+		mountPoint = mountPoint + "/"
+	}
+
 	for i := len(MountNamespaces) - 1; i >= 0; i-- {
-		target := mountPoint + MountNamespaces[i].target
+		target := mountPoint + strings.TrimPrefix(MountNamespaces[i].target, "/")
+		
+		// Double-check that target is within the mount point to prevent host unmounting
+		if !strings.HasPrefix(target, mountPoint) {
+			fmt.Printf("Warning: skipping unsafe unmount target: %s. THIS PROBABLY IS A BUG!!\n", target)
+			continue
+		}
+		
+		// Check if target is actually mounted before attempting unmount
+		if !e.isMounted(target) {
+			continue
+		}
+		
 		cmd := exec.Command("umount", target)
 		err := cmd.Run()
 		if err != nil {
 			// try lazy mode
 			cmd = exec.Command("umount", "-l", target)
 			err = cmd.Run()
+			if err != nil {
+				fmt.Printf("Warning: failed to unmount %s: %v\n", target, err)
+			}
 		}
 	}
 
 	return nil
+}
+
+// isMounted checks if a path is currently mounted by reading /proc/mounts
+func (e *Executor) isMounted(path string) bool {
+	mounts, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return false
+	}
+	
+	lines := strings.Split(string(mounts), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, " "+path+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // CleanupBackupFiles removes backup files for a mount point
