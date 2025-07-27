@@ -64,17 +64,12 @@ jobs:
     if: github.event_name == 'release'
     
     steps:
-    - name: Download amd64
+    - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
-        name: qimi-amd64
+        name: qimi-*
         path: ./binaries
-
-    - name: Download arm64
-      uses: actions/download-artifact@v4
-      with:
-        name: qimi-arm64
-        path: ./binaries
+        merge-multiple: true
 
     - name: Create checksums
       run: |
