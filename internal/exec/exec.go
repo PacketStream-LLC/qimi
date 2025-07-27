@@ -168,6 +168,7 @@ func (e *Executor) backupAndSetupResolvConf(mountPoint string, nameservers []str
 	logger.Debug("checking if backup already exists: %s", backupPath)
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 		logger.Debug("no existing backup, creating new backup")
+
 		// Check if target exists
 		if info, err := os.Lstat(target); err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
@@ -255,8 +256,19 @@ func (e *Executor) backupAndSetupResolvConf(mountPoint string, nameservers []str
 		logger.Debug("read host resolv.conf content (%d bytes)", len(resolvContent))
 	}
 
+	// if file exists, remove it before writing new content
+	if _, err := os.Stat(target); err == nil {
+		logger.Debug("removing existing resolv.conf: %s", target)
+		if err := os.Remove(target); err != nil {
+			logger.Error("failed to remove existing resolv.conf: %v", err)
+			return err
+		}
+		logger.Debug("existing resolv.conf removed successfully")
+	}
+
 	// Write resolv.conf to chroot
 	logger.Debug("writing resolv.conf to chroot: %s (%d bytes)", target, len(resolvContent))
+
 	if err := os.WriteFile(target, resolvContent, 0644); err != nil {
 		logger.Error("failed to write resolv.conf: %v", err)
 		return err
