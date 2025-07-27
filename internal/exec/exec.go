@@ -24,8 +24,7 @@ type MountNamespace struct {
 var MountNamespaces = []MountNamespace{
 	{source: "none", target: "/proc", fstype: "proc", flags: 0},
 	{source: "none", target: "/sys", fstype: "sysfs", flags: 0},
-	{source: "/dev", target: "/dev", fstype: "bind", flags: 0},
-	{source: "none", target: "/dev/pts", fstype: "devpts", flags: 0},
+	{source: "/dev", target: "/dev", fstype: "rbind", flags: 0},
 	{source: "tmpfs", target: "/tmp", fstype: "tmpfs", flags: 0},
 }
 
@@ -102,8 +101,11 @@ func (e *Executor) setupMountNamespace(mountPoint string) error {
 
 		var cmd *exec.Cmd
 		if m.fstype == "bind" {
-			cmd = exec.Command("mount", "-o", "bind", m.source, target)
+			cmd = exec.Command("mount", "--bind", m.source, target)
 			logger.Debug("executing bind mount: %s", strings.Join(cmd.Args, " "))
+		} else if m.fstype == "rbind" {
+			cmd = exec.Command("mount", "--rbind", m.source, target)
+			logger.Debug("executing rbind mount: %s", strings.Join(cmd.Args, " "))
 		} else {
 			cmd = exec.Command("mount", "-t", m.fstype, m.source, target)
 			logger.Debug("executing filesystem mount: %s", strings.Join(cmd.Args, " "))

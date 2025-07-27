@@ -1,9 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"os"
-
 	"github.com/packetstream-llc/qimi/internal/logger"
 	"github.com/packetstream-llc/qimi/internal/nbd"
 	"github.com/spf13/cobra"
