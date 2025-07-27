@@ -43,7 +43,7 @@ func (e *Executor) Execute(mountPoint string, command string, args []string, int
 	}
 	logger.Debug("mount point validation successful")
 
-	logger.Info("setting up mount namespace")
+	logger.Debug("setting up mount namespace")
 	if err := e.setupMountNamespace(mountPoint); err != nil {
 		logger.Error("mount namespace setup failed: %v", err)
 		return fmt.Errorf("failed to setup mount namespace: %w", err)
@@ -51,7 +51,7 @@ func (e *Executor) Execute(mountPoint string, command string, args []string, int
 	logger.Debug("mount namespace setup completed")
 
 	// Backup and setup resolv.conf
-	logger.Info("setting up resolv.conf")
+	logger.Debug("setting up resolv.conf")
 	if err := e.backupAndSetupResolvConf(mountPoint, nameservers); err != nil {
 		logger.Warn("failed to setup resolv.conf: %v", err)
 	} else {
@@ -65,7 +65,7 @@ func (e *Executor) Execute(mountPoint string, command string, args []string, int
 	}()
 
 	fullCmd := append([]string{mountPoint, command}, args...)
-	logger.Info("executing command in chroot: chroot %s", strings.Join(fullCmd, " "))
+	logger.Debug("executing command in chroot: chroot %s", strings.Join(fullCmd, " "))
 	chrootCmd := exec.Command("chroot", fullCmd...)
 
 	if interactive {
@@ -314,7 +314,7 @@ func (e *Executor) restoreResolvConf(mountPoint string) error {
 }
 
 func (e *Executor) CleanupMountNamespace(mountPoint string) error {
-	logger.Info("starting mount namespace cleanup: %s", mountPoint)
+	logger.Debug("starting mount namespace cleanup: %s", mountPoint)
 
 	// Validate mountPoint to prevent accidentally unmounting host directories
 	if mountPoint == "" || mountPoint == "/" || mountPoint == "/dev" || mountPoint == "/proc" || mountPoint == "/sys" {
