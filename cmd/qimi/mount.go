@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/packetstream-llc/qimi/internal/logger"
 	"github.com/packetstream-llc/qimi/internal/mount"
 	"github.com/packetstream-llc/qimi/internal/nbd"
 	"github.com/packetstream-llc/qimi/internal/storage"
@@ -52,8 +53,7 @@ var mountCmd = &cobra.Command{
 
 		mountPoint, err := mounter.MountWithPartition(imagePath, readOnly, partitionNum)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error mounting image: %v\n", err)
-			os.Exit(1)
+			logger.Fatal("Error mounting image: %v", err)
 		}
 
 		mountInfo := &storage.MountInfo{
@@ -65,8 +65,7 @@ var mountCmd = &cobra.Command{
 
 		if err := store.AddMount(mountInfo); err != nil {
 			mounter.Unmount(mountPoint)
-			fmt.Fprintf(os.Stderr, "Error saving mount info: %v\n", err)
-			os.Exit(1)
+			logger.Fatal("Error saving mount info: %v", err)
 		}
 
 		fmt.Printf("Successfully mounted %s", imagePath)
