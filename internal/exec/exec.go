@@ -3,9 +3,11 @@ package exec
 import (
 	"crypto/md5"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 type Executor struct{}
@@ -29,7 +31,7 @@ func New() *Executor {
 	return &Executor{}
 }
 
-func (e *Executor) Execute(mountPoint string, command string, args []string, interactive, tty bool) error {
+func (e *Executor) Execute(mountPoint string, command string, args []string, interactive, tty bool, nameservers []string) error {
 	if _, err := os.Stat(mountPoint); err != nil {
 		return fmt.Errorf("mount point not found: %w", err)
 	}
@@ -39,7 +41,7 @@ func (e *Executor) Execute(mountPoint string, command string, args []string, int
 	}
 
 	// Backup and setup resolv.conf
-	if err := e.backupAndSetupResolvConf(mountPoint); err != nil {
+	if err := e.backupAndSetupResolvConf(mountPoint, nameservers); err != nil {
 		fmt.Printf("Warning: failed to setup resolv.conf: %v\n", err)
 	}
 
@@ -90,7 +92,7 @@ func (e *Executor) getBackupPath(mountPoint string) string {
 	return filepath.Join("/tmp/qimi/files", backupName)
 }
 
-func (e *Executor) backupAndSetupResolvConf(mountPoint string) error {
+func (e *Executor) backupAndSetupResolvConf(mountPoint string, nameservers []string) error {
 	target := mountPoint + "/etc/resolv.conf"
 	etcDir := mountPoint + "/etc"
 	backupPath := e.getBackupPath(mountPoint)
@@ -127,14 +129,36 @@ func (e *Executor) backupAndSetupResolvConf(mountPoint string) error {
 		}
 	}
 
-	// Read host resolv.conf
-	hostResolv, err := os.ReadFile("/etc/resolv.conf")
-	if err != nil {
-		return err
+	var resolvContent []byte
+	
+	if len(nameservers) > 0 {
+		// Validate nameservers and create custom resolv.conf
+		var validNameservers []string
+		for _, ns := range nameservers {
+			if ip := net.ParseIP(ns); ip != nil {
+				validNameservers = append(validNameservers, ns)
+			} else {
+				return fmt.Errorf("invalid nameserver IP address: %s", ns)
+			}
+		}
+		
+		// Create custom resolv.conf content
+		var resolvLines []string
+		for _, ns := range validNameservers {
+			resolvLines = append(resolvLines, fmt.Sprintf("nameserver %s", ns))
+		}
+		resolvContent = []byte(strings.Join(resolvLines, "\n") + "\n")
+	} else {
+		// Read host resolv.conf
+		var err error
+		resolvContent, err = os.ReadFile("/etc/resolv.conf")
+		if err != nil {
+			return err
+		}
 	}
 
-	// Write host resolv.conf to chroot
-	return os.WriteFile(target, hostResolv, 0644)
+	// Write resolv.conf to chroot
+	return os.WriteFile(target, resolvContent, 0644)
 }
 
 func (e *Executor) restoreResolvConf(mountPoint string) error {

@@ -15,6 +15,7 @@ var (
 	interactive  bool
 	tty          bool
 	execReadOnly bool
+	nameservers  []string
 )
 
 var execCmd = &cobra.Command{
@@ -68,7 +69,7 @@ var execCmd = &cobra.Command{
 		}
 
 		executor := exec.New()
-		if err := executor.Execute(mountPoint, command, commandArgs, interactive, tty); err != nil {
+		if err := executor.Execute(mountPoint, command, commandArgs, interactive, tty, nameservers); err != nil {
 			fmt.Fprintf(os.Stderr, "Error executing command: %v\n", err)
 			os.Exit(1)
 		}
@@ -83,5 +84,6 @@ func init() {
 	execCmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Keep STDIN open")
 	execCmd.Flags().BoolVarP(&tty, "tty", "t", false, "Allocate a pseudo-TTY")
 	execCmd.Flags().BoolVar(&execReadOnly, "read-only", false, "Mount the image as read-only")
+	execCmd.Flags().StringSliceVar(&nameservers, "nameserver", nil, "Custom nameservers for resolv.conf (can be specified multiple times)")
 	rootCmd.AddCommand(execCmd)
 }
