@@ -116,3 +116,5 @@ sudo qimi cleanup
 ### exec Options
 - `-i` - Interactive mode
 - `-t` - Allocate a TTY
+
+MIT &copy; PacketStream LLC, All rights reserved
