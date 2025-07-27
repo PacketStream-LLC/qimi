@@ -54,7 +54,7 @@ jobs:
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: qimi-binaries
+        name: qimi-${{ matrix.goarch }}
         path: ${{ steps.binary.outputs.name }}
         retention-days: 30
 
@@ -64,10 +64,16 @@ jobs:
     if: github.event_name == 'release'
     
     steps:
-    - name: Download all artifacts
+    - name: Download amd64
       uses: actions/download-artifact@v4
       with:
-        name: qimi-binaries
+        name: qimi-amd64
+        path: ./binaries
+
+    - name: Download arm64
+      uses: actions/download-artifact@v4
+      with:
+        name: qimi-arm64
         path: ./binaries
 
     - name: Create checksums
