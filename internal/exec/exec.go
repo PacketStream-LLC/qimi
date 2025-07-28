@@ -257,14 +257,13 @@ func (e *Executor) backupAndSetupResolvConf(mountPoint string, nameservers []str
 		logger.Debug("read host resolv.conf content (%d bytes)", len(resolvContent))
 	}
 
-	// if file exists, remove it before writing new content
-	if _, err := os.Stat(target); err == nil {
-		logger.Debug("removing existing resolv.conf: %s", target)
-		if err := os.Remove(target); err != nil {
-			logger.Error("failed to remove existing resolv.conf: %v", err)
-			return err
-		}
-		logger.Debug("existing resolv.conf removed successfully")
+	// Remove the existing file/symlink before writing new content
+	// This is important because if it's a symlink pointing to a non-existent file,
+	// we can't write to it directly
+	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+		logger.Debug("failed to remove existing resolv.conf: %v (continuing anyway)", err)
+	} else if err == nil {
+		logger.Debug("removed existing resolv.conf/symlink successfully")
 	}
 
 	// Write resolv.conf to chroot
