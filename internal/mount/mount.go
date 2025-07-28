@@ -87,8 +87,18 @@ func (m *Mounter) Unmount(mountPoint string) error {
 	executor := qimiexec.New()
 	executor.CleanupBackupFiles(mountPoint) // Ignore error
 
-	// Always remove the mount point directory
-	return os.RemoveAll(mountPoint)
+	// check if directory is empty before removing
+	if entries, err := os.ReadDir(mountPoint); err != nil {
+		return fmt.Errorf("failed to read mount point directory: %w", err)
+	} else if len(entries) == 0 {
+		if err := os.RemoveAll(mountPoint); err != nil {
+			return fmt.Errorf("failed to remove mount point directory: %w", err)
+		}
+	} else {
+		logger.Warn("Mount point %s is not empty, skipping removal", mountPoint)
+	}
+
+	return nil
 }
 
 func (m *Mounter) mountQemuImage(imagePath, mountPoint string, readOnly bool, partitionNum int) error {
@@ -137,8 +147,7 @@ func (m *Mounter) mountQemuImage(imagePath, mountPoint string, readOnly bool, pa
 	// Store NBD metadata outside the mount point
 	nbdFile := filepath.Join(m.metadataDir, filepath.Base(mountPoint)+".nbd")
 	if err := os.WriteFile(nbdFile, []byte(nbdDevice), 0644); err != nil {
-		exec.Command("umount", mountPoint).Run()
-		m.disconnectNBD(nbdDevice)
+		m.Unmount(mountPoint) // Attempt to unmount if saving metadata fails
 		return fmt.Errorf("failed to save nbd info: %w", err)
 	}
 

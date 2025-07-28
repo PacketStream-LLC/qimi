@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	osExec "os/exec"
 
 	"github.com/packetstream-llc/qimi/internal/exec"
 	"github.com/packetstream-llc/qimi/internal/mount"
@@ -23,10 +24,9 @@ var execCmd = &cobra.Command{
 	Short: "Execute a command in a QEMU image",
 	Long:  `Mount a QEMU image (if not already mounted) and execute a command inside it using chroot.`,
 	Args:  cobra.MinimumNArgs(2),
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if !utils.IsRoot() {
-			fmt.Fprintf(os.Stderr, "Error: This command requires root privileges. Please run with sudo.\n")
-			os.Exit(1)
+			return fmt.Errorf("this command requires root privileges. Please run with sudo")
 		}
 
 		target := args[0]
@@ -35,48 +35,73 @@ var execCmd = &cobra.Command{
 
 		store, err := storage.New()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error initializing storage: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("error initializing storage: %w", err)
 		}
 
 		mountInfo, err := store.GetMount(target)
 		var mountPoint string
 		var tempMount bool
+		var mounter *mount.Mounter
 
 		if err != nil {
 			if _, statErr := os.Stat(target); statErr == nil {
-				mounter, err := mount.New()
+				mounter, err = mount.New()
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error initializing mounter: %v\n", err)
-					os.Exit(1)
+					return fmt.Errorf("error initializing mounter: %w", err)
 				}
 
 				mountPoint, err = mounter.Mount(target, execReadOnly)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error mounting image: %v\n", err)
-					os.Exit(1)
+					return fmt.Errorf("error mounting image: %w", err)
 				}
 				tempMount = true
-				defer func() {
-					mounter.Unmount(mountPoint)
-				}()
 			} else {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				return fmt.Errorf("error: %w", err)
 			}
 		} else {
 			mountPoint = mountInfo.MountPoint
 		}
 
 		executor := exec.New()
-		if err := executor.Execute(mountPoint, command, commandArgs, interactive, tty, nameservers); err != nil {
-			fmt.Fprintf(os.Stderr, "Error executing command: %v\n", err)
-			os.Exit(1)
+
+		// Setup cleanup function
+		cleanup := func() {
+			// Clean up mount namespace first
+			if err := executor.CleanupMountNamespace(mountPoint); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup mount namespace: %v\n", err)
+			}
+			if err := executor.CleanupBackupFiles(mountPoint); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup backup files: %v\n", err)
+			}
+
+			// If this was a temporary mount, unmount it
+			if tempMount && mounter != nil {
+				if err := mounter.Unmount(mountPoint); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to unmount: %v\n", err)
+				}
+			}
 		}
 
-		if tempMount {
-			executor.CleanupMountNamespace(mountPoint)
+		// Execute the command
+		execErr := executor.Execute(mountPoint, command, commandArgs, interactive, tty, nameservers)
+
+		// Always cleanup
+		cleanup()
+
+		// Return the execution error (cobra will handle the exit code)
+		if execErr != nil {
+			// check if it is exit status
+			if exitErr, ok := execErr.(*osExec.ExitError); ok {
+				if exitErr.ExitCode() != 0 {
+					os.Exit(exitErr.ExitCode())
+				}
+
+				// If the command failed, return the error with exit code
+				return fmt.Errorf("command exited with code %d: %w", exitErr.ExitCode(), execErr)
+			}
 		}
+
+		return nil
 	},
 }
 
