@@ -1,16 +1,16 @@
 package mount
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"errors"
 
 	qimiexec "github.com/packetstream-llc/qimi/internal/exec"
+	"github.com/packetstream-llc/qimi/internal/logger"
 	"github.com/packetstream-llc/qimi/internal/nbd"
- 	"github.com/packetstream-llc/qimi/internal/logger"
 )
 
 type Mounter struct {
@@ -101,20 +101,20 @@ func (m *Mounter) mountQemuImage(imagePath, mountPoint string, readOnly bool, pa
 	logger.Debug("Found free NBD Device! Using NBD device: %s", nbdDevice)
 	logger.Debug("Connecting image %s to NBD device %s", imagePath, nbdDevice)
 	if err := nbd.ConnectImage(imagePath, nbdDevice, readOnly); err != nil {
-		m.doDiscount(nbdDevice)
+		m.disconnectNBD(nbdDevice)
 		return err
 	}
 
 	logger.Debug("Probing partitions on NBD device %s", nbdDevice)
 	if err := nbd.ProbePartitions(nbdDevice); err != nil {
-		m.doDiscount(nbdDevice)
+		m.disconnectNBD(nbdDevice)
 		return err
 	}
 
 	logger.Debug("Getting partition device for partition number %d on NBD device %s", partitionNum, nbdDevice)
 	partition, err := nbd.GetPartitionDevice(nbdDevice, partitionNum)
 	if err != nil {
-		m.doDiscount(nbdDevice)
+		m.disconnectNBD(nbdDevice)
 		return err
 	}
 
@@ -130,7 +130,7 @@ func (m *Mounter) mountQemuImage(imagePath, mountPoint string, readOnly bool, pa
 	logger.Debug("Executing mount command: %s", strings.Join(mountOpts, " "))
 	cmd := exec.Command("mount", mountOpts...)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		m.doDiscount(nbdDevice)
+		m.disconnectNBD(nbdDevice)
 		return fmt.Errorf("failed to mount %s to %s: %w\nOutput: %s", partition, mountPoint, err, string(output))
 	}
 
@@ -138,14 +138,11 @@ func (m *Mounter) mountQemuImage(imagePath, mountPoint string, readOnly bool, pa
 	nbdFile := filepath.Join(m.metadataDir, filepath.Base(mountPoint)+".nbd")
 	if err := os.WriteFile(nbdFile, []byte(nbdDevice), 0644); err != nil {
 		exec.Command("umount", mountPoint).Run()
-		m.doDiscount(nbdDevice)
+		m.disconnectNBD(nbdDevice)
 		return fmt.Errorf("failed to save nbd info: %w", err)
 	}
 
 	return nil
-}
-
-func (m *Mounter) doDiscount(nbdDevice string) {
 }
 
 func (m *Mounter) disconnectNBD(mountPoint string) error {

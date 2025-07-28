@@ -89,24 +89,25 @@ func (e *Executor) Execute(mountPoint string, command string, args []string, int
 
 func (e *Executor) setupMountNamespace(mountPoint string) error {
 	logger.Debug("setting up mount namespaces for %d filesystems", len(MountNamespaces))
-	
+
 	for i, m := range MountNamespaces {
 		target := mountPoint + m.target
 		logger.Debug("mount %d/%d: preparing %s -> %s (type: %s)", i+1, len(MountNamespaces), m.source, target, m.fstype)
-		
+
 		if err := os.MkdirAll(target, 0755); err != nil {
 			logger.Debug("failed to create directory %s: %v, skipping", target, err)
 			continue
 		}
 
 		var cmd *exec.Cmd
-		if m.fstype == "bind" {
+		switch m.fstype {
+		case "bind":
 			cmd = exec.Command("mount", "--bind", m.source, target)
 			logger.Debug("executing bind mount: %s", strings.Join(cmd.Args, " "))
-		} else if m.fstype == "rbind" {
+		case "rbind":
 			cmd = exec.Command("mount", "--rbind", m.source, target)
 			logger.Debug("executing rbind mount: %s", strings.Join(cmd.Args, " "))
-		} else {
+		default:
 			cmd = exec.Command("mount", "-t", m.fstype, m.source, target)
 			logger.Debug("executing filesystem mount: %s", strings.Join(cmd.Args, " "))
 		}
@@ -214,7 +215,7 @@ func (e *Executor) backupAndSetupResolvConf(mountPoint string, nameservers []str
 	}
 
 	var resolvContent []byte
-	
+
 	if len(nameservers) > 0 {
 		logger.Debug("using custom nameservers: %v", nameservers)
 		// Validate nameservers and create custom resolv.conf
@@ -228,7 +229,7 @@ func (e *Executor) backupAndSetupResolvConf(mountPoint string, nameservers []str
 				return fmt.Errorf("invalid nameserver IP address: %s", ns)
 			}
 		}
-		
+
 		// Create custom resolv.conf content
 		var resolvLines []string
 		for _, ns := range validNameservers {
@@ -334,7 +335,7 @@ func (e *Executor) CleanupMountNamespace(mountPoint string) error {
 		logger.Error("%v", err)
 		return err
 	}
-	
+
 	// Additional safety check - mount point should be an absolute path under /tmp or similar
 	if !strings.HasPrefix(mountPoint, "/tmp/") && !strings.HasPrefix(mountPoint, "/mnt/") {
 		err := fmt.Errorf("unsafe mount point for cleanup: %s. THIS PROBABLY IS A BUG!!", mountPoint)
@@ -342,7 +343,7 @@ func (e *Executor) CleanupMountNamespace(mountPoint string) error {
 		return err
 	}
 	logger.Debug("mount point validation passed")
-	
+
 	// Ensure mountPoint ends with proper path separator for safe concatenation
 	if !strings.HasSuffix(mountPoint, "/") {
 		mountPoint = mountPoint + "/"
@@ -350,21 +351,44 @@ func (e *Executor) CleanupMountNamespace(mountPoint string) error {
 
 	logger.Debug("cleaning up %d mount namespaces in reverse order", len(MountNamespaces))
 	for i := len(MountNamespaces) - 1; i >= 0; i-- {
-		target := mountPoint + strings.TrimPrefix(MountNamespaces[i].target, "/")
+		namespace := MountNamespaces[i]
+		target := mountPoint + strings.TrimPrefix(namespace.target, "/")
 		logger.Debug("cleanup %d/%d: checking %s", len(MountNamespaces)-i, len(MountNamespaces), target)
-		
+
 		// Double-check that target is within the mount point to prevent host unmounting
 		if !strings.HasPrefix(target, mountPoint) {
 			logger.Warn("skipping unsafe unmount target: %s. THIS PROBABLY IS A BUG!!", target)
 			continue
 		}
-		
+
 		// Check if target is actually mounted before attempting unmount
 		if !e.isMounted(target) {
 			logger.Debug("target not mounted, skipping: %s", target)
 			continue
 		}
-		
+
+		// If it is bind or rbind, we should make it private first
+		switch namespace.fstype {
+		case "bind":
+			logger.Debug("making %s private before unmounting", target)
+			cmd := exec.Command("mount", "--make-private", target)
+			if err := cmd.Run(); err != nil {
+				logger.Warn("failed to make %s private: %v", target, err)
+				// Continue with unmount even if this fails
+			} else {
+				logger.Debug("made %s private successfully", target)
+			}
+		case "rbind":
+			logger.Debug("making %s rprivate before unmounting", target)
+			cmd := exec.Command("mount", "--make-rprivate", target)
+			if err := cmd.Run(); err != nil {
+				logger.Warn("failed to make %s rprivate: %v", target, err)
+				// Continue with unmount even if this fails
+			} else {
+				logger.Debug("made %s rprivate successfully", target)
+			}
+		}
+
 		logger.Debug("unmounting: %s", target)
 		cmd := exec.Command("umount", target)
 		err := cmd.Run()
@@ -393,7 +417,7 @@ func (e *Executor) isMounted(path string) bool {
 	if err != nil {
 		return false
 	}
-	
+
 	lines := strings.Split(string(mounts), "\n")
 	for _, line := range lines {
 		if strings.Contains(line, " "+path+" ") {
