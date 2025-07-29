@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/packetstream-llc/qimi/internal/logger"
 )
 
 // CheckSystemDependencies verifies that required tools and modules are available
@@ -176,13 +174,51 @@ func GetPartitionDevice(nbd string, partitionNum int) (string, error) {
 	}
 
 	if len(partitions) > 1 {
-		// Multiple suitable partitions found, require user to specify
-		var partNums []string
-		for _, p := range partitions {
-			partNums = append(partNums, fmt.Sprintf("%d (%s)", p.Number, p.FSType))
+		// Check if we have obvious root filesystems vs boot/swap partitions
+		rootFSTypes := []string{"ext4", "ext3", "ext2", "xfs", "btrfs", "f2fs"}
+		var rootPartitions []PartitionInfo
+		
+		for _, part := range partitions {
+			for _, rootFS := range rootFSTypes {
+				if strings.EqualFold(part.FSType, rootFS) {
+					rootPartitions = append(rootPartitions, part)
+					break
+				}
+			}
 		}
-		logger.Warn("Multiple suitable partitions found on %s: %s. Define partition number with --partition flag", nbd, strings.Join(partNums, ", "))
-		return "", fmt.Errorf("multiple suitable partitions found: %s", strings.Join(partNums, ", "))
+		
+		// If we have exactly one obvious root filesystem, use it
+		if len(rootPartitions) == 1 {
+			return rootPartitions[0].Path, nil
+		}
+		
+		// If we have multiple root filesystems of different types, pick the most preferred
+		if len(rootPartitions) > 1 {
+			// Check if they're all the same filesystem type
+			firstType := strings.ToLower(rootPartitions[0].FSType)
+			allSameType := true
+			for _, part := range rootPartitions[1:] {
+				if strings.ToLower(part.FSType) != firstType {
+					allSameType = false
+					break
+				}
+			}
+			
+			// If they're all the same type (e.g., multiple XFS), ask user to specify
+			if allSameType {
+				var partNums []string
+				for _, p := range rootPartitions {
+					partNums = append(partNums, fmt.Sprintf("%d (%s)", p.Number, p.FSType))
+				}
+				return "", fmt.Errorf("multiple %s partitions found: %s. Please specify a partition number using --partition flag", firstType, strings.Join(partNums, ", "))
+			}
+			
+			// Different root filesystem types, pick the most preferred one
+			return rootPartitions[0].Path, nil
+		}
+		
+		// No obvious root filesystems, return the most preferred available
+		return partitions[0].Path, nil
 	}
 
 	// Single suitable partition found
