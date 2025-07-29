@@ -7,6 +7,7 @@ import (
 
 	"github.com/packetstream-llc/qimi/internal/exec"
 	"github.com/packetstream-llc/qimi/internal/mount"
+	"github.com/packetstream-llc/qimi/internal/nbd"
 	"github.com/packetstream-llc/qimi/internal/storage"
 	"github.com/packetstream-llc/qimi/internal/utils"
 	"github.com/spf13/cobra"
@@ -17,6 +18,7 @@ var (
 	tty          bool
 	execReadOnly bool
 	nameservers  []string
+	execPartition string
 )
 
 var execCmd = &cobra.Command{
@@ -50,7 +52,13 @@ var execCmd = &cobra.Command{
 					return fmt.Errorf("error initializing mounter: %w", err)
 				}
 
-				mountPoint, err = mounter.Mount(target, execReadOnly)
+				// Parse partition number
+				partitionNum := 0
+				if execPartition != "" {
+					partitionNum = nbd.GetPartitionNumber(execPartition)
+				}
+
+				mountPoint, err = mounter.MountWithPartition(target, execReadOnly, partitionNum)
 				if err != nil {
 					return fmt.Errorf("error mounting image: %w", err)
 				}
@@ -110,5 +118,6 @@ func init() {
 	execCmd.Flags().BoolVarP(&tty, "tty", "t", false, "Allocate a pseudo-TTY")
 	execCmd.Flags().BoolVar(&execReadOnly, "read-only", false, "Mount the image as read-only")
 	execCmd.Flags().StringSliceVar(&nameservers, "nameserver", nil, "Custom nameservers for resolv.conf (can be specified multiple times)")
+	execCmd.Flags().StringVarP(&execPartition, "partition", "p", "", "Partition to mount (e.g., 1, p2, partition3)")
 	rootCmd.AddCommand(execCmd)
 }

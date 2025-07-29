@@ -64,33 +64,33 @@ func isNBDFree(nbd string) bool {
 	// Extract NBD number from device path
 	deviceName := strings.TrimPrefix(nbd, "/dev/")
 	pidFile := fmt.Sprintf("/sys/devices/virtual/block/%s/pid", deviceName)
-	
+
 	// If pid file doesn't exist, device is free
 	if _, err := os.Stat(pidFile); os.IsNotExist(err) {
 		return true
 	}
-	
+
 	// Read the pid file
 	pidData, err := os.ReadFile(pidFile)
 	if err != nil {
 		// If we can't read the file, assume device is in use
 		return false
 	}
-	
+
 	// Check if the file is empty or contains just whitespace
 	pidStr := strings.TrimSpace(string(pidData))
 	if pidStr == "" {
 		// Empty pid file means device is free
 		return true
 	}
-	
+
 	// Parse the PID
 	pid, err := strconv.Atoi(pidStr)
 	if err != nil {
 		// Invalid PID format, assume device is in use
 		return false
 	}
-	
+
 	// Check if the process is still running
 	// On Linux, we can check if /proc/PID exists
 	procPath := fmt.Sprintf("/proc/%d", pid)
@@ -98,7 +98,7 @@ func isNBDFree(nbd string) bool {
 		// Process doesn't exist, device is free
 		return true
 	}
-	
+
 	// Process exists, device is in use
 	return false
 }
@@ -130,16 +130,24 @@ func ProbePartitions(nbd string) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to probe partitions on %s: %w", nbd, err)
 	}
-	
+
 	// Give the kernel time to create partition devices
 	time.Sleep(500 * time.Millisecond)
-	
+
 	return nil
+}
+
+// PartitionInfo contains information about a partition
+type PartitionInfo struct {
+	Number int
+	Path   string
+	FSType string
 }
 
 // GetPartitionDevice returns the best partition device to mount
 // If partitionNum is specified (> 0), use that partition
 // Otherwise, try to find the most suitable partition (preferring common filesystems)
+// If multiple suitable partitions are found and no partitionNum is specified, returns an error
 func GetPartitionDevice(nbd string, partitionNum int) (string, error) {
 	if partitionNum > 0 {
 		// User specified a partition number
@@ -151,7 +159,31 @@ func GetPartitionDevice(nbd string, partitionNum int) (string, error) {
 	}
 
 	// Auto-detect the best partition
-	return detectBestPartition(nbd)
+	partitions, deviceHasFS, err := detectSuitablePartitions(nbd)
+	if err != nil {
+		return "", err
+	}
+
+	if len(partitions) == 0 {
+		// No suitable partitions found, use the device directly if it has a filesystem
+		if deviceHasFS {
+			return nbd, nil
+		}
+		// No filesystem found anywhere
+		return nbd, nil // Still return the device for compatibility
+	}
+
+	if len(partitions) > 1 {
+		// Multiple suitable partitions found, require user to specify
+		var partNums []string
+		for _, p := range partitions {
+			partNums = append(partNums, fmt.Sprintf("%d (%s)", p.Number, p.FSType))
+		}
+		return "", fmt.Errorf("multiple suitable partitions found: %s. Please specify a partition number using --partition.", strings.Join(partNums, ", "))
+	}
+
+	// Single suitable partition found
+	return partitions[0].Path, nil
 }
 
 // GetPartitionNumber extracts partition number from a partition specifier
@@ -178,35 +210,32 @@ func GetPartitionNumber(partSpec string) int {
 	return 0
 }
 
-// detectBestPartition finds the most suitable partition to mount
-func detectBestPartition(nbd string) (string, error) {
+// detectSuitablePartitions finds all suitable partitions to mount
+// Returns a list of partitions with recognized filesystems, sorted by preference
+// Also returns whether the device itself has a filesystem
+func detectSuitablePartitions(nbd string) ([]PartitionInfo, bool, error) {
 	// Get partition information using lsblk
 	cmd := exec.Command("lsblk", "-o", "NAME,FSTYPE", "-r", "-n", nbd)
 	output, err := cmd.Output()
 	if err != nil {
 		// If lsblk fails, check if we can use the device directly
 		if _, statErr := os.Stat(nbd); statErr == nil {
-			return nbd, nil
+			return nil, true, nil
 		}
-		return "", fmt.Errorf("failed to get partition info for %s: %w", nbd, err)
+		return nil, false, fmt.Errorf("failed to get partition info for %s: %w", nbd, err)
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	if len(lines) == 0 {
-		return nbd, nil // No partitions, use device directly
+		return nil, false, nil // No partitions
 	}
-	
+
 	// Debug: print lsblk output
 	// fmt.Printf("DEBUG: lsblk output for %s:\n%s\n", nbd, string(output))
 
 	// Parse partition information
-	type partition struct {
-		name   string
-		fstype string
-		path   string
-	}
-
-	var partitions []partition
+	var partitions []PartitionInfo
+	var deviceHasFS bool
 	baseDeviceName := strings.TrimPrefix(nbd, "/dev/")
 
 	for _, line := range lines {
@@ -221,25 +250,32 @@ func detectBestPartition(nbd string) (string, error) {
 			fstype = fields[1]
 		}
 
-		// Skip the base device, only look at partitions
+		// Check if the base device itself has a filesystem
 		if name == baseDeviceName {
+			if fstype != "" && fstype != "-" {
+				deviceHasFS = true
+			}
 			continue
 		}
 
 		// Check if this is a partition of our device
 		if strings.HasPrefix(name, baseDeviceName+"p") {
-			partitions = append(partitions, partition{
-				name:   name,
-				fstype: fstype,
-				path:   "/dev/" + name,
-			})
-			// fmt.Printf("DEBUG: Found partition: %s (fstype: %s)\n", name, fstype)
+			// Extract partition number
+			partNumStr := strings.TrimPrefix(name, baseDeviceName+"p")
+			partNum, _ := strconv.Atoi(partNumStr)
+			if partNum > 0 {
+				partitions = append(partitions, PartitionInfo{
+					Number: partNum,
+					Path:   "/dev/" + name,
+					FSType: fstype,
+				})
+			}
 		}
 	}
 
 	if len(partitions) == 0 {
-		// No partitions found, use the device directly
-		return nbd, nil
+		// No partitions found
+		return nil, deviceHasFS, nil
 	}
 
 	// Priority order for filesystem types (most preferred first)
@@ -250,29 +286,41 @@ func detectBestPartition(nbd string) (string, error) {
 		"hfs", "hfsplus", // macOS filesystems
 	}
 
-	// Try to find a partition with a preferred filesystem
-	for _, preferredType := range preferredFS {
-		for _, part := range partitions {
-			if strings.EqualFold(part.fstype, preferredType) {
-				return part.path, nil
+	// Filter partitions with recognized filesystems
+	var suitablePartitions []PartitionInfo
+	for _, part := range partitions {
+		if part.FSType != "" && part.FSType != "-" {
+			suitablePartitions = append(suitablePartitions, part)
+		}
+	}
+
+	// If no partitions have recognized filesystems, return all partitions
+	if len(suitablePartitions) == 0 {
+		return partitions, deviceHasFS, nil
+	}
+
+	// Sort suitable partitions by filesystem preference
+	// Create a priority map
+	priority := make(map[string]int)
+	for i, fs := range preferredFS {
+		priority[strings.ToLower(fs)] = i
+	}
+
+	// Sort partitions by filesystem priority
+	for i := 0; i < len(suitablePartitions)-1; i++ {
+		for j := i + 1; j < len(suitablePartitions); j++ {
+			pri1, ok1 := priority[strings.ToLower(suitablePartitions[i].FSType)]
+			pri2, ok2 := priority[strings.ToLower(suitablePartitions[j].FSType)]
+
+			// If both have priority, sort by priority
+			if ok1 && ok2 && pri2 < pri1 {
+				suitablePartitions[i], suitablePartitions[j] = suitablePartitions[j], suitablePartitions[i]
+			} else if !ok1 && ok2 {
+				// If only j has priority, swap
+				suitablePartitions[i], suitablePartitions[j] = suitablePartitions[j], suitablePartitions[i]
 			}
 		}
 	}
 
-	// If no preferred filesystem found, look for any partition with a filesystem
-	for _, part := range partitions {
-		if part.fstype != "" && part.fstype != "-" {
-			return part.path, nil
-		}
-	}
-
-	// If no partition has a recognized filesystem, use the first partition
-	// For cloud images, this is typically the root filesystem
-	if len(partitions) > 0 {
-		// fmt.Printf("DEBUG: No partition with recognized filesystem found, using first partition: %s\n", partitions[0].path)
-		return partitions[0].path, nil
-	}
-
-	// Fallback to the device itself
-	return nbd, nil
+	return suitablePartitions, deviceHasFS, nil
 }
