@@ -3,7 +3,11 @@
 > [!WARNING]  
 > This is not an official PacketStream LLC service or product.
 
-**qimi** is a command-line tool that allows you to mount QEMU disk images (`.qcow2`, `.qcow2c`, `.raw`) and execute commands inside them using chroot.
+**qimi** is a command-line tool that allows you to mount QEMU disk images (`.qcow2`, `.qcow2c`, `.raw`) and execute commands inside them using chroot.  
+
+## Why qimi?
+Unlike `virt-customize` or `guestfish`, qimi allows you to **USE** the image (running binaries inside, etc.) like you use as a Linux container, without restriction of `guestfish` (only the filesystem modifications) or `virt-customize` (only allows specific set of modifications).  
+Basically allows you to use `.qcow2` image as a `docker`, but without the need of `kvm`.
 
 ## Prerequisites
 
