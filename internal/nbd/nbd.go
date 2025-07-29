@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/packetstream-llc/qimi/internal/logger"
 )
 
 // CheckSystemDependencies verifies that required tools and modules are available
@@ -179,7 +181,8 @@ func GetPartitionDevice(nbd string, partitionNum int) (string, error) {
 		for _, p := range partitions {
 			partNums = append(partNums, fmt.Sprintf("%d (%s)", p.Number, p.FSType))
 		}
-		return "", fmt.Errorf("multiple suitable partitions found: %s. Please specify a partition number using --partition.", strings.Join(partNums, ", "))
+		logger.Warn("Multiple suitable partitions found on %s: %s. Define partition number with --partition flag", nbd, strings.Join(partNums, ", "))
+		return "", fmt.Errorf("multiple suitable partitions found: %s", strings.Join(partNums, ", "))
 	}
 
 	// Single suitable partition found

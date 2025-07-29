@@ -14,10 +14,10 @@ import (
 )
 
 var (
-	interactive  bool
-	tty          bool
-	execReadOnly bool
-	nameservers  []string
+	interactive   bool
+	tty           bool
+	execReadOnly  bool
+	nameservers   []string
 	execPartition string
 )
 

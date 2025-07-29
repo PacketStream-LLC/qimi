@@ -111,20 +111,20 @@ func (m *Mounter) mountQemuImage(imagePath, mountPoint string, readOnly bool, pa
 	logger.Debug("Found free NBD Device! Using NBD device: %s", nbdDevice)
 	logger.Debug("Connecting image %s to NBD device %s", imagePath, nbdDevice)
 	if err := nbd.ConnectImage(imagePath, nbdDevice, readOnly); err != nil {
-		m.disconnectNBD(nbdDevice)
+		m.disconnectNBDDevice(nbdDevice)
 		return err
 	}
 
 	logger.Debug("Probing partitions on NBD device %s", nbdDevice)
 	if err := nbd.ProbePartitions(nbdDevice); err != nil {
-		m.disconnectNBD(nbdDevice)
+		m.disconnectNBDDevice(nbdDevice)
 		return err
 	}
 
 	logger.Debug("Getting partition device for partition number %d on NBD device %s", partitionNum, nbdDevice)
 	partition, err := nbd.GetPartitionDevice(nbdDevice, partitionNum)
 	if err != nil {
-		m.disconnectNBD(nbdDevice)
+		m.disconnectNBDDevice(nbdDevice)
 		return err
 	}
 
@@ -140,7 +140,7 @@ func (m *Mounter) mountQemuImage(imagePath, mountPoint string, readOnly bool, pa
 	logger.Debug("Executing mount command: %s", strings.Join(mountOpts, " "))
 	cmd := exec.Command("mount", mountOpts...)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		m.disconnectNBD(nbdDevice)
+		m.disconnectNBDDevice(nbdDevice) // Attempt to disconnect NBD if mount fails
 		return fmt.Errorf("failed to mount %s to %s: %w\nOutput: %s", partition, mountPoint, err, string(output))
 	}
 
@@ -168,10 +168,23 @@ func (m *Mounter) disconnectNBD(mountPoint string) error {
 	}
 
 	nbdDevice := strings.TrimSpace(string(data))
-	err = nbd.DisconnectDevice(nbdDevice)
+	err = m.disconnectNBDDevice(nbdDevice)
 
 	// Clean up metadata file
 	os.Remove(nbdFile)
 
 	return err
+}
+
+func (m *Mounter) disconnectNBDDevice(nbdDevice string) error {
+	if nbdDevice == "" {
+		return nil // Nothing to disconnect
+	}
+
+	logger.Debug("Disconnecting NBD device: %s", nbdDevice)
+	if err := nbd.DisconnectDevice(nbdDevice); err != nil {
+		return fmt.Errorf("failed to disconnect NBD device %s: %w", nbdDevice, err)
+	}
+
+	return nil
 }
