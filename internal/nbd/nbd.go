@@ -204,13 +204,18 @@ func GetPartitionDevice(nbd string, partitionNum int) (string, error) {
 				}
 			}
 			
-			// If they're all the same type (e.g., multiple XFS), ask user to specify
+			// If they're all the same type (e.g., multiple XFS), pick the larger one
 			if allSameType {
-				var partNums []string
-				for _, p := range rootPartitions {
-					partNums = append(partNums, fmt.Sprintf("%d (%s)", p.Number, p.FSType))
+				largestPartition, err := findLargestPartition(rootPartitions)
+				if err != nil {
+					// If we can't determine size, fall back to asking user
+					var partNums []string
+					for _, p := range rootPartitions {
+						partNums = append(partNums, fmt.Sprintf("%d (%s)", p.Number, p.FSType))
+					}
+					return "", fmt.Errorf("multiple %s partitions found: %s. Please specify a partition number using --partition flag", firstType, strings.Join(partNums, ", "))
 				}
-				return "", fmt.Errorf("multiple %s partitions found: %s. Please specify a partition number using --partition flag", firstType, strings.Join(partNums, ", "))
+				return largestPartition.Path, nil
 			}
 			
 			// Different root filesystem types, pick the most preferred one
@@ -362,4 +367,66 @@ func detectSuitablePartitions(nbd string) ([]PartitionInfo, bool, error) {
 	}
 
 	return suitablePartitions, deviceHasFS, nil
+}
+
+// findLargestPartition finds the partition with the largest size from the given list
+func findLargestPartition(partitions []PartitionInfo) (PartitionInfo, error) {
+	if len(partitions) == 0 {
+		return PartitionInfo{}, fmt.Errorf("no partitions provided")
+	}
+
+	// Get partition sizes using lsblk
+	var devicePaths []string
+	for _, p := range partitions {
+		devicePaths = append(devicePaths, p.Path)
+	}
+
+	cmd := exec.Command("lsblk", "-o", "NAME,SIZE", "-r", "-n", "-b")
+	cmd.Args = append(cmd.Args, devicePaths...)
+	
+	output, err := cmd.Output()
+	if err != nil {
+		return PartitionInfo{}, fmt.Errorf("failed to get partition sizes: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	partitionSizes := make(map[string]int64)
+
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		
+		deviceName := fields[0]
+		sizeStr := fields[1]
+		
+		size, err := strconv.ParseInt(sizeStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		
+		// Map device name to full path
+		fullPath := "/dev/" + deviceName
+		partitionSizes[fullPath] = size
+	}
+
+	// Find the partition with the largest size
+	var largestPartition PartitionInfo
+	var largestSize int64 = -1
+
+	for _, partition := range partitions {
+		if size, exists := partitionSizes[partition.Path]; exists {
+			if size > largestSize {
+				largestSize = size
+				largestPartition = partition
+			}
+		}
+	}
+
+	if largestSize == -1 {
+		return PartitionInfo{}, fmt.Errorf("could not determine partition sizes")
+	}
+
+	return largestPartition, nil
 }
